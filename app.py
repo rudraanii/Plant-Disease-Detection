@@ -20,7 +20,14 @@ disease_info = pd.read_csv(os.path.join(BASE_DIR, "disease_info.csv"), encoding=
 supplement_info = pd.read_csv(os.path.join(BASE_DIR, "supplement_info1.csv"), encoding="cp1252")
 
 model = CNN.CNN(39)
-model.load_state_dict(torch.load(MODEL_PATH, map_location="cpu"))
+if os.path.exists(MODEL_PATH):
+    try:
+        model.load_state_dict(torch.load(MODEL_PATH, map_location="cpu"))
+        print(f"Loaded trained model weights from {MODEL_PATH}")
+    except Exception as e:
+        print(f"Error loading {MODEL_PATH}: {e}. Running with initialized model weights.")
+else:
+    print(f"Notice: {MODEL_PATH} not found. Running with initialized model weights.")
 model.eval()
 
 
