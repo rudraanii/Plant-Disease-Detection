@@ -1,73 +1,91 @@
 import os
-from flask import Flask, redirect, render_template, request
-from PIL import Image
-import torchvision.transforms.functional as TF
-import CNN
 import numpy as np
-import torch
 import pandas as pd
+import torch
+import torchvision.transforms.functional as TF
+from flask import Flask, render_template, request, redirect
+from PIL import Image
+from werkzeug.utils import secure_filename
 
+import CNN
 
-disease_info = pd.read_csv('disease_info.csv' , encoding='cp1252')
-supplement_info = pd.read_csv('supplement_info1.csv',encoding='cp1252')
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+UPLOAD_DIR = os.path.join(BASE_DIR, "static", "uploads")
+MODEL_PATH = os.path.join(BASE_DIR, "plant_disease_model_1_latest.pt")
+ALLOWED = {"png", "jpg", "jpeg", "webp"}
 
-model = CNN.CNN(39)    
-model.load_state_dict(torch.load("plant_disease_model_1_latest.pt"))
+os.makedirs(UPLOAD_DIR, exist_ok=True)
+
+disease_info = pd.read_csv(os.path.join(BASE_DIR, "disease_info.csv"), encoding="cp1252")
+supplement_info = pd.read_csv(os.path.join(BASE_DIR, "supplement_info1.csv"), encoding="cp1252")
+
+model = CNN.CNN(39)
+model.load_state_dict(torch.load(MODEL_PATH, map_location="cpu"))
 model.eval()
 
 
 def prediction(image_path):
-    image = Image.open(image_path)
-    image = image.resize((224, 224))
-    input_data = TF.to_tensor(image)
-    input_data = input_data.view((-1, 3, 224, 224))
-    output = model(input_data)
-    output = output.detach().numpy()
-    index = np.argmax(output)
-    return index
+    image = Image.open(image_path).convert("RGB").resize((224, 224))
+    data = TF.to_tensor(image).view(-1, 3, 224, 224)
+    with torch.no_grad():
+        output = model(data)
+    return int(np.argmax(output.numpy()))
 
 
 app = Flask(__name__)
+app.config["MAX_CONTENT_LENGTH"] = 8 * 1024 * 1024  # 8 MB upload limit
 
-@app.route('/')
+
+@app.route("/")
 def home_page():
-    return render_template('home.html')
+    return render_template("home.html")
 
-@app.route('/contact')
-def contact():
-    return render_template('contact-us.html')
 
-@app.route('/index')
+@app.route("/index")
 def ai_engine_page():
-    return render_template('index.html')
+    return render_template("index.html")
 
-@app.route('/mobile-device')
-def mobile_device_detected_page():
-    return render_template('mobile-device.html')
 
-@app.route('/submit', methods=['GET', 'POST'])
+@app.route("/submit", methods=["GET", "POST"])
 def submit():
-    if request.method == 'POST':
-        image = request.files['image']
-        filename = image.filename
-        file_path = os.path.join('static/uploads', filename)
-        image.save(file_path)
-        print(file_path)
-        pred = prediction(file_path)
-        title = disease_info['disease_name'][pred]
-        description =disease_info['description'][pred]
-        prevent = disease_info['Possible Steps'][pred]
-        image_url = disease_info['image_url'][pred]
-        supplement_name = supplement_info['supplement name'][pred]
-        supplement_image_url = supplement_info['supplement image'][pred]
-        supplement_buy_link = supplement_info['buy link'][pred]
-        return render_template('submit.html' , title = title , desc = description , prevent = prevent , 
-                               image_url = image_url , pred = pred ,sname = supplement_name , simage = supplement_image_url , buy_link = supplement_buy_link)
+    if request.method != "POST":
+        return redirect("/index")
 
-@app.route('/market', methods=['GET', 'POST'])
+    image = request.files.get("image")
+    if not image or not image.filename:
+        return redirect("/index")
+
+    name = secure_filename(image.filename)
+    if name.rsplit(".", 1)[-1].lower() not in ALLOWED:
+        return "Please upload a PNG, JPG or WEBP image.", 400
+
+    file_path = os.path.join(UPLOAD_DIR, name)
+    image.save(file_path)
+    pred = prediction(file_path)
+
+    return render_template(
+        "submit.html",
+        title=disease_info["disease_name"][pred],
+        desc=disease_info["description"][pred],
+        prevent=disease_info["Possible Steps"][pred],
+        image_url=disease_info["image_url"][pred],
+        pred=pred,
+        sname=supplement_info["supplement name"][pred],
+        simage=supplement_info["supplement image"][pred],
+        buy_link=supplement_info["buy link"][pred],
+    )
+
+
+@app.route("/market")
 def market():
-    return render_template('market.html', supplement_image = list(supplement_info['supplement image']),
-                           supplement_name = list(supplement_info['supplement name']), disease = list(disease_info['disease_name']), buy = list(supplement_info['buy link']))
+    return render_template(
+        "market.html",
+        supplement_image=list(supplement_info["supplement image"]),
+        supplement_name=list(supplement_info["supplement name"]),
+        disease=list(disease_info["disease_name"]),
+        buy=list(supplement_info["buy link"]),
+    )
 
-if __name__ == '__main__':
-    app.run(debug=True)
+
+if __name__ == "__main__":
+    app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 7860)))
